@@ -1,0 +1,338 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+Description: One-click deployment of WireGuard server using the latest Ubuntu version with Session Manager and VPC
+
+Parameters:
+  VPNPort:
+    Default: 51820
+    Type: Number
+  RetentionInDays:
+    Default: 14
+    Type: Number
+    AllowedValues:
+      - 1
+      - 3
+      - 5
+      - 7
+      - 14
+      - 30
+      - 60
+      - 90
+      - 120
+      - 150
+      - 180
+      - 365
+      - 400
+      - 545
+      - 731
+      - 1096
+      - 1827
+      - 2192
+      - 2557
+      - 2922
+      - 3288
+      - 3653
+  Users:
+    Description: Comma delimited list of users public keys. Refer to https://www.wireguard.com/quickstart/ how to generate these.
+    Type: CommaDelimitedList
+
+Globals:
+  Function:
+    MemorySize: 128
+    Runtime: python3.10
+    Timeout: 60
+
+Mappings:
+  RegionMap:
+    eu-west-1:
+      AMI: ami-05147510eb2885c80
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: WireGuardVPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.0.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: WireGuardInternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  WireGuardSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable WireGuard access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: udp
+          FromPort: !Ref VPNPort
+          ToPort: !Ref VPNPort
+          CidrIp: 0.0.0.0/0
+
+  WireGuardInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref WireGuardInstanceRole
+
+  WireGuardInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: WireGuardEC2Policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeAddresses
+                  - ec2:AssociateAddress
+                Resource: "*"
+
+  CryptographyLambdaLayer:
+    Type: AWS::Serverless::LayerVersion
+    DeletionPolicy: Retain
+    Properties:
+      LayerName: cryptography
+      Description: Cryptography library for Python
+      ContentUri: ./libs/
+      CompatibleRuntimes:
+        - python3.10
+      LicenseInfo: BSD
+    Metadata:
+      BuildMethod: python3.10
+
+  GenerateWireGuardKeysFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      Handler: keys_generate.handler
+      Role: !GetAtt GenerateWireGuardKeysRole.Arn
+      CodeUri: src/
+      Layers:
+        - !Ref CryptographyLambdaLayer
+
+  GenerateWireGuardKeysLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName:
+        Fn::Sub: '/aws/lambda/${GenerateWireGuardKeysFunction}'
+      RetentionInDays: !Ref RetentionInDays
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: lambda-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:AssociateAddress
+                Resource: "*"
+
+  GenerateWireGuardKeysRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - Fn::Sub: arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMParameterAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource:
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/wireguard/server/private_key'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/wireguard/server/public_key'
+
+  GenerateWireGuardKeys:
+    Type: Custom::GenerateWireGuardKeys
+    Properties:
+      ServiceToken: !GetAtt GenerateWireGuardKeysFunction.Arn
+
+  WireGuardLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn:
+      - GenerateWireGuardKeys
+      - WireGuardEIP
+    Properties:
+      LaunchTemplateData:
+        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+        InstanceType: t2.micro
+        SecurityGroupIds:
+          - !Ref WireGuardSecurityGroup
+        IamInstanceProfile:
+          Arn: !GetAtt WireGuardInstanceProfile.Arn
+        UserData:
+          Fn::Base64: !Sub
+            - |
+              #!/bin/bash
+              set -e
+
+              # Install packages
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y awscli curl wireguard
+
+              # Set default region
+              export AWS_DEFAULT_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed 's/\([0-9][0-9]*\)[a-z]*$/\1/')
+
+              # Collect parameters
+              PRIVATE_KEY=$(aws ssm get-parameter --name /wireguard/server/private_key --with-decryption --query "Parameter.Value" --output text)
+              ALLOCATION_ID=$(aws ec2 describe-addresses --filters="Name=tag:Name,Values=wireguard-pool" --output text --query "Addresses[0].AllocationId")
+              EXTERNAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+              INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+
+              # Assign static IP from pool
+              if [ ! -z ${!ALLOCATION_ID} ]; then
+                aws ec2 associate-address --instance-id ${!INSTANCE_ID} --allocation-id ${!ALLOCATION_ID} --allow-reassociation
+              fi
+
+              # Save PRIVATE_KEY variable for further WireGuard configuration commands.
+              echo ${!PRIVATE_KEY} > /etc/wireguard/private.key
+              chmod og-rwx /etc/wireguard/private.key
+
+              # Allow forwarding
+              sysctl -w net.ipv4.ip_forward=1
+
+              # Setup firewall
+              ufw route allow in on wg0 out on eth0
+              ufw allow ${VPNPort}/udp
+              ufw enable
+
+              iptables -t nat -I POSTROUTING -o eth0 -j MASQUERADE
+              ip6tables -t nat -I POSTROUTING -o eth0 -j MASQUERADE
+
+              # Setup server
+              ip link add wg0 type wireguard
+              ip add add 172.16.0.1/24 dev wg0
+              wg set wg0 private-key /etc/wireguard/private.key
+              wg set wg0 listen-port ${VPNPort}
+              ip link set wg0 up
+
+              # Setup clients
+              for user in ${UserArray}
+              do
+                wg set wg0 peer ${!user} allowed-ips 0.0.0.0/0 persistent-keepalive 25
+              done
+            - UserArray: !Join [" ", !Ref Users]
+
+  WireGuardAutoScalingGroup:
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT5M
+        WaitOnResourceSignals: False
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WireGuardLaunchTemplate
+        Version: !GetAtt WireGuardLaunchTemplate.LatestVersionNumber
+      MinSize: 1
+      MaxSize: 2
+      DesiredCapacity: 1
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet
+
+  WireGuardEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: wireguard-pool
+
+
+Outputs:
+  WireGuardEIP:
+    Value: !GetAtt WireGuardEIP.PublicIp
+    Description: The Elastic IP address to use for the WireGuard server
+
+  WireGuardPublicKey:
+    Value: !GetAtt GenerateWireGuardKeys.PublicKey
+    Description: The public key of the WireGuard server
