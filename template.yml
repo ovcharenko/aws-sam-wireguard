@@ -36,17 +36,15 @@ Parameters:
   Users:
     Description: Comma delimited list of users public keys. Refer to https://www.wireguard.com/quickstart/ how to generate these.
     Type: CommaDelimitedList
+  UbuntuLatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: /aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id
 
 Globals:
   Function:
     MemorySize: 128
     Runtime: python3.10
     Timeout: 60
-
-Mappings:
-  RegionMap:
-    eu-west-1:
-      AMI: ami-05147510eb2885c80
 
 Resources:
   VPC:
@@ -242,7 +240,7 @@ Resources:
       - WireGuardEIP
     Properties:
       LaunchTemplateData:
-        ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+        ImageId: !Ref UbuntuLatestAmiId
         InstanceType: t2.micro
         SecurityGroupIds:
           - !Ref WireGuardSecurityGroup
