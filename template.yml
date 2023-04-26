@@ -172,6 +172,11 @@ Resources:
   GenerateWireGuardKeysLogGroup:
     Type: AWS::Logs::LogGroup
     DeletionPolicy: Retain
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3011
     Properties:
       LogGroupName:
         Fn::Sub: '/aws/lambda/${GenerateWireGuardKeysFunction}'

@@ -3,4 +3,5 @@
 *.iml
 .aws-sam
 .idea
+.tox
 samconfig.toml
