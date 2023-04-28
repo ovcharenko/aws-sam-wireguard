@@ -7,6 +7,10 @@ Parameters:
   VPNPort:
     Default: 51820
     Type: Number
+  VPNNetworkPart:
+    Description: The network part of VPN address. VPN server will get .1 IP address. Dynamic clients -- anything between .128 and 254.
+    Default: 172.16.0
+    Type: String
   RetentionInDays:
     Default: 14
     Type: Number
@@ -34,7 +38,7 @@ Parameters:
       - 3288
       - 3653
   Users:
-    Description: Comma delimited list of users public keys. Refer to https://www.wireguard.com/quickstart/ how to generate these.
+    Description: A list of users' public keys and their allowed IP addresses, where each user's information is separated by a comma and consists of the user's public key followed by a colon, then the user's allowed IP address. If user's allowed IP is not set value from VPNNetworkPart dynamic range will be used. Refer to https://www.wireguard.com/quickstart/ how to generate client configuration.
     Type: CommaDelimitedList
   UbuntuLatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
@@ -293,15 +297,27 @@ Resources:
 
               # Setup server
               ip link add wg0 type wireguard
-              ip add add 172.16.0.1/24 dev wg0
+              ip add add ${VPNNetworkPart}.1/24 dev wg0
               wg set wg0 private-key /etc/wireguard/private.key
               wg set wg0 listen-port ${VPNPort}
               ip link set wg0 up
 
               # Setup clients
+              dynamic_pool=($(seq 128 254))
+              declare -i dynamic_client_index
+
               for user in ${UserArray}
               do
-                wg set wg0 peer ${!user} allowed-ips 0.0.0.0/0 persistent-keepalive 25
+                # Replace colon with space and assign to related variables
+                read public_key ip <<< ${!user/:/ }
+
+                # If IP address is missing assign the next one from the dynamic pool
+                if [ -z "${!ip}" ]; then
+                  ip="${VPNNetworkPart}.${!dynamic_pool[$dynamic_client_index]}/32"
+                  ((++dynamic_client_index))
+                fi
+
+                wg set wg0 peer ${!public_key} allowed-ips ${!ip} persistent-keepalive 25
               done
             - UserArray: !Join [" ", !Ref Users]
 
