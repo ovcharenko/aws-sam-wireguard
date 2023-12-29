@@ -265,10 +265,14 @@ Resources:
               #!/bin/bash
               set -e
 
+              # Catch exit code and signal CloudFormation
+              trap 'exit_status=${!?}; /usr/local/bin/cfn-signal -e ${!exit_status} --stack ${AWS::StackName} --resource WireGuardAutoScalingGroup --region ${AWS::Region}' HUP INT TERM EXIT
+
               # Install packages
               export DEBIAN_FRONTEND=noninteractive
               apt-get update
-              apt-get install -y awscli curl wireguard
+              apt-get install -y awscli curl wireguard python3-pip
+              pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
 
               # Set default region
               export AWS_DEFAULT_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed 's/\([0-9][0-9]*\)[a-z]*$/\1/')
@@ -326,12 +330,21 @@ Resources:
             - UserArray: !Join [" ", !Ref Users]
 
   WireGuardAutoScalingGroup:
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MinInstancesInService: 1
         MaxBatchSize: 1
         PauseTime: PT5M
-        WaitOnResourceSignals: False
+        WaitOnResourceSignals: True
+        SuspendProcesses:
+          - AZRebalance
+          - AlarmNotification
+          - HealthCheck
+          - ReplaceUnhealthy
+          - ScheduledActions
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
       LaunchTemplate:
