@@ -11,6 +11,10 @@ Parameters:
     Description: The network part of VPN address. VPN server will get .1 IP address. Dynamic clients -- anything between .128 and 254.
     Default: 172.16.0
     Type: String
+  VpcCidrBlock:
+    Description: CIDR block for the VPC
+    Type: String
+    Default: 10.0.0.0/16
   RetentionInDays:
     Default: 14
     Type: Number
@@ -54,7 +58,7 @@ Resources:
   VPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/16
+      CidrBlock: !Ref VpcCidrBlock
       EnableDnsSupport: true
       EnableDnsHostnames: true
       Tags:
@@ -65,7 +69,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: 10.0.0.0/24
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, "16", "8" ]]
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
@@ -353,5 +357,5 @@ Outputs:
     Description: The Elastic IP address to use for the WireGuard server
 
   WireGuardPublicKey:
-    Value: !GetAtt GenerateWireGuardKeys.PublicKey
+    Value: !Sub '{{resolve:ssm:/wireguard/server/public_key}}'
     Description: The public key of the WireGuard server
