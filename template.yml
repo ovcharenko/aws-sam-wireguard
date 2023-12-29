@@ -69,7 +69,7 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref VPC
-      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, "16", "8" ]]
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt VPC.CidrBlock, 16, 8 ]]
       MapPublicIpOnLaunch: true
       Tags:
         - Key: Name
