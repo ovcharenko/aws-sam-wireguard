@@ -254,7 +254,7 @@ Resources:
     Properties:
       LaunchTemplateData:
         ImageId: !Ref UbuntuLatestAmiId
-        InstanceType: t2.micro
+        InstanceType: t3.micro
         SecurityGroupIds:
           - !Ref WireGuardSecurityGroup
         IamInstanceProfile:
@@ -295,13 +295,16 @@ Resources:
               # Allow forwarding
               sysctl -w net.ipv4.ip_forward=1
 
+              # Get default interface name
+              INTERFACE=$(ip route show to default | awk '/dev/ {print $5}')
+
               # Setup firewall
-              ufw route allow in on wg0 out on eth0
+              ufw route allow in on wg0 out on ${!INTERFACE}
               ufw allow ${VPNPort}/udp
               ufw enable
 
-              iptables -t nat -I POSTROUTING -o eth0 -j MASQUERADE
-              ip6tables -t nat -I POSTROUTING -o eth0 -j MASQUERADE
+              iptables -t nat -I POSTROUTING -o ${!INTERFACE} -j MASQUERADE
+              ip6tables -t nat -I POSTROUTING -o ${!INTERFACE} -j MASQUERADE
 
               # Setup server
               ip link add wg0 type wireguard
