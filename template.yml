@@ -50,10 +50,11 @@ Parameters:
   InstanceTypeParam:
     Description: EC2 Instance Type
     Type: String
-    Default: t4g.nano
+    Default: t4g.small
     AllowedValues:
       - t4g.nano
       - t4g.micro
+      - t4g.small
     ConstraintDescription: must be a valid EC2 instance type.
 
 Globals:
