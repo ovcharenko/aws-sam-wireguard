@@ -46,7 +46,15 @@ Parameters:
     Type: CommaDelimitedList
   UbuntuLatestAmiId:
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
-    Default: /aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id
+    Default: /aws/service/canonical/ubuntu/server/20.04/stable/current/arm64/hvm/ebs-gp2/ami-id
+  InstanceTypeParam:
+    Description: EC2 Instance Type
+    Type: String
+    Default: t4g.nano
+    AllowedValues:
+      - t4g.nano
+      - t4g.micro
+    ConstraintDescription: must be a valid EC2 instance type.
 
 Globals:
   Function:
@@ -254,11 +262,13 @@ Resources:
     Properties:
       LaunchTemplateData:
         ImageId: !Ref UbuntuLatestAmiId
-        InstanceType: t3.micro
+        InstanceType: !Ref InstanceTypeParam
         SecurityGroupIds:
           - !Ref WireGuardSecurityGroup
         IamInstanceProfile:
           Arn: !GetAtt WireGuardInstanceProfile.Arn
+        MetadataOptions:
+          HttpTokens: optional
         UserData:
           Fn::Base64: !Sub
             - |
@@ -275,11 +285,12 @@ Resources:
               pip3 install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
 
               # Set default region
-              export AWS_DEFAULT_REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | sed 's/\([0-9][0-9]*\)[a-z]*$/\1/')
+              export TOKEN=`curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60"`
+              export AWS_DEFAULT_REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone | sed 's/\([0-9][0-9]*\)[a-z]*$/\1/')
 
               # Collect parameters
               PRIVATE_KEY=$(aws ssm get-parameter --name /wireguard/server/private_key --with-decryption --query "Parameter.Value" --output text)
-              ALLOCATION_ID=$(aws ec2 describe-addresses --filters="Name=tag:Name,Values=wireguard-pool" --output text --query "Addresses[0].AllocationId")
+              ALLOCATION_ID=$(aws ec2 describe-addresses --filters="Name=tag:Name,Values=${AWS::StackName}-wireguard-pool" --output text --query "Addresses[0].AllocationId")
               EXTERNAL_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
               INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 
@@ -364,8 +375,7 @@ Resources:
     Properties:
       Tags:
         - Key: Name
-          Value: wireguard-pool
-
+          Value: !Sub "${AWS::StackName}-wireguard-pool"
 
 Outputs:
   WireGuardEIP:
